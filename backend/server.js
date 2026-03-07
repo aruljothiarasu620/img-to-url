@@ -86,7 +86,10 @@ const sequelize = new Sequelize(
     port: process.env.DB_PORT || 3306,
     dialect: 'mysql',
     logging: false,
-    retry: { max: 3 }
+    dialectOptions: {
+      connectTimeout: 2000
+    },
+    retry: { max: 1 }
   }
 );
 
@@ -195,3 +198,5 @@ app.listen(port, () => {
     console.log(`📂 Images will be served from: http://localhost:${port}/uploads/`);
   }
 });
+
+module.exports = app;
