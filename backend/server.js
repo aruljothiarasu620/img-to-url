@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const { Sequelize, DataTypes } = require('sequelize');
+require('mysql2'); // Explicitly required for Vercel bundler
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
@@ -155,6 +156,12 @@ app.post('/upload', upload.single('image'), async (req, res) => {
     console.error('Upload error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// @route GET /test
+// Health check
+app.get('/test', (req, res) => {
+  res.json({ ok: true, message: 'Server is running', vercel: process.env.VERCEL });
 });
 
 // @route GET /images
