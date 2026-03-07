@@ -139,8 +139,32 @@ app.post('/upload', upload.single('image'), async (req, res) => {
       url = req.file.path;
       id_ref = req.file.filename;
     } else {
-      url = `http://localhost:${port}/uploads/${req.file.filename}`;
-      id_ref = req.file.filename;
+      // Because Vercel deletes local files in /tmp instantly, we use a public free hosting API
+      // as a seamless fallback if the user hasn't set up Cloudinary keys yet.
+      const isVercel = process.env.VERCEL === '1';
+
+      if (isVercel) {
+        const axios = require('axios');
+        const base64Image = fs.readFileSync(req.file.path, { encoding: 'base64' });
+        const formData = new URLSearchParams();
+        formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); // Public freeimagehost API Key
+        formData.append('action', 'upload');
+        formData.append('format', 'json');
+        formData.append('source', base64Image);
+
+        const response = await axios.post('https://freeimage.host/api/1/upload', formData, {
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+
+        url = response.data.image.url;
+        id_ref = 'freehost-' + response.data.image.name;
+
+        // Cleanup Vercel temp disk
+        fs.unlinkSync(req.file.path);
+      } else {
+        url = `http://localhost:${port}/uploads/${req.file.filename}`;
+        id_ref = req.file.filename;
+      }
     }
 
     // Attempt to save to MySQL if connected, otherwise return URL with warning
