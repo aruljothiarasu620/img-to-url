@@ -365,7 +365,7 @@ function App() {
             </section>
 
             <footer style={{ marginTop: 'auto', padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                <p>© 2026 Image Cloud. Powered by Node.js & React.</p>
+                <p>© 2026 Image Cloud. Powered by mamitha.crushae 💖</p>
             </footer>
         </div>
     );
