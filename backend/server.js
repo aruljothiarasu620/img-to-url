@@ -15,6 +15,14 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
+// Normalize Vercel paths (removes /api prefix so existing routes work)
+app.use((req, res, next) => {
+  if (req.url.startsWith('/api')) {
+    req.url = req.url.replace(/^\/api/, '');
+  }
+  next();
+});
+
 // Determine if Cloudinary is configured
 const isCloudinaryConfigured =
   process.env.CLOUDINARY_CLOUD_NAME &&
@@ -45,14 +53,16 @@ if (isCloudinaryConfigured) {
 } else {
   console.log('⚠️  Cloudinary keys missing or placeholder. FALLBACK: Using Local Storage.');
   // Ensure local uploads directory exists
-  const uploadsDir = path.join(__dirname, 'uploads');
+  // Vercel only allows writing to /tmp directory
+  const isVercel = process.env.VERCEL === '1';
+  const uploadsDir = isVercel ? '/tmp/uploads' : path.join(__dirname, 'uploads');
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir);
   }
 
   storage = multer.diskStorage({
     destination: (req, file, cb) => {
-      cb(null, 'uploads/');
+      cb(null, uploadsDir);
     },
     filename: (req, file, cb) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -61,7 +71,7 @@ if (isCloudinaryConfigured) {
   });
 
   // Serve the uploads folder as static
-  app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+  app.use('/uploads', express.static(uploadsDir));
 }
 
 const upload = multer({ storage });

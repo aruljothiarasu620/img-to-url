@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000');
 
 function App() {
     const [selectedFile, setSelectedFile] = useState(null);
@@ -69,7 +69,8 @@ function App() {
 
         } catch (err) {
             console.error('Upload failed:', err);
-            alert('Upload failed: ' + (err.response?.data?.error || err.message));
+            const errMsg = err.response?.data?.error || err.message || JSON.stringify(err);
+            alert('Upload failed: ' + errMsg);
         } finally {
             setUploading(false);
         }

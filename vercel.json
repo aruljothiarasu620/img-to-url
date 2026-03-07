@@ -1,4 +1,5 @@
 {
+    "name": "img-to-url",
     "version": 2,
     "builds": [
         {
