@@ -16,8 +16,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000');
 
 function App() {
-    const [selectedFile, setSelectedFile] = useState(null);
-    const [preview, setPreview] = useState(null);
+    const [uploadMode, setUploadMode] = useState('image'); // 'image' or 'video'
+    const [selectedFiles, setSelectedFiles] = useState([]);
+    const [previews, setPreviews] = useState([]);
     const [uploading, setUploading] = useState(false);
     const [images, setImages] = useState([]);
     const [copiedId, setCopiedId] = useState(null);
@@ -38,34 +39,58 @@ function App() {
     };
 
     const handleFileChange = (e) => {
-        const file = e.target.files[0];
-        if (file && file.type.startsWith('image/')) {
-            setSelectedFile(file);
-            setPreview(URL.createObjectURL(file));
+        processFiles(Array.from(e.target.files));
+    };
+
+    const processFiles = (files) => {
+        let validFiles = [];
+        const isImageMode = uploadMode === 'image';
+        const typePrefix = isImageMode ? 'image/' : 'video/';
+        const maxFiles = isImageMode ? 10 : 5;
+
+        validFiles = files.filter(file => {
+            if (!file.type.startsWith(typePrefix)) {
+                alert(`${file.name} is not a valid ${uploadMode}.`);
+                return false;
+            }
+            return true;
+        }).slice(0, maxFiles);
+
+        if (validFiles.length > 0) {
+            setSelectedFiles(validFiles);
+            setPreviews(validFiles.map(file => ({
+                url: URL.createObjectURL(file),
+                type: file.type
+            })));
         }
     };
 
-    const [generatedUrl, setGeneratedUrl] = useState('');
+    const [generatedUrls, setGeneratedUrls] = useState([]);
 
     const handleUpload = async () => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
 
         setUploading(true);
         const formData = new FormData();
-        formData.append('image', selectedFile);
+        selectedFiles.forEach(file => {
+            formData.append('images', file); // Use 'images' array field
+        });
 
         try {
             const res = await axios.post(`${API_BASE_URL}/upload`, formData);
-            const newUrl = res.data.url;
-            setGeneratedUrl(newUrl); // Store it to show to user
+            const newUrls = res.data.urls || []; // Return array of URLs
+            setGeneratedUrls(newUrls);
 
-            setSelectedFile(null);
-            setPreview(null);
-            fetchImages(); // Still refresh gallery in case it worked
+            setSelectedFiles([]);
+            setPreviews([]);
+            fetchImages();
 
-            // Auto copy URL if it's the only goal
-            navigator.clipboard.writeText(newUrl);
-            alert("Success! URL generated and copied to clipboard: \n" + newUrl);
+            if (newUrls.length === 1) {
+                navigator.clipboard.writeText(newUrls[0]);
+                alert("Success! URL generated and copied to clipboard.");
+            } else if (newUrls.length > 1) {
+                alert(`Success! ${newUrls.length} URLs generated.`);
+            }
 
         } catch (err) {
             console.error('Upload failed:', err);
@@ -106,13 +131,13 @@ function App() {
         e.preventDefault();
         e.stopPropagation();
         setDragActive(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            const file = e.dataTransfer.files[0];
-            if (file.type.startsWith('image/')) {
-                setSelectedFile(file);
-                setPreview(URL.createObjectURL(file));
-            }
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            processFiles(Array.from(e.dataTransfer.files));
         }
+    };
+
+    const isVideoURL = (url) => {
+        return url.match(/\.(mp4|webm|ogg|mov)$/i);
     };
 
     return (
@@ -129,6 +154,22 @@ function App() {
             </header>
 
             <section className="card animate-fade-in">
+                <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '24px' }}>
+                    <button
+                        className="btn"
+                        style={{ background: uploadMode === 'image' ? 'var(--primary)' : 'transparent', border: '1px solid var(--primary)' }}
+                        onClick={() => { setUploadMode('image'); setSelectedFiles([]); setPreviews([]); }}
+                    >
+                        <ImageIcon size={20} /> Photos (Max 10)
+                    </button>
+                    <button
+                        className="btn"
+                        style={{ background: uploadMode === 'video' ? 'var(--primary)' : 'transparent', border: '1px solid var(--primary)' }}
+                        onClick={() => { setUploadMode('video'); setSelectedFiles([]); setPreviews([]); }}
+                    >
+                        <Layers size={20} /> Videos (Max 5)
+                    </button>
+                </div>
                 <div className="upload-section">
                     <div
                         className={`dropzone ${dragActive ? 'active' : ''}`}
@@ -141,11 +182,20 @@ function App() {
                         <input
                             ref={fileInputRef}
                             type="file"
-                            accept="image/*"
+                            multiple
+                            accept={uploadMode === 'image' ? 'image/*' : 'video/*'}
                             onChange={handleFileChange}
                         />
-                        {preview ? (
-                            <img src={preview} alt="Preview" style={{ maxHeight: '100%', maxWidth: '100%', borderRadius: '12px' }} />
+                        {previews.length > 0 ? (
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {previews.map((preview, index) => (
+                                    preview.type.startsWith('video/') ? (
+                                        <video key={index} src={preview.url} controls style={{ maxHeight: '120px', maxWidth: '120px', borderRadius: '12px', objectFit: 'cover' }} />
+                                    ) : (
+                                        <img key={index} src={preview.url} alt={`Preview ${index}`} style={{ maxHeight: '120px', maxWidth: '120px', borderRadius: '12px', objectFit: 'cover' }} />
+                                    )
+                                ))}
+                            </div>
                         ) : (
                             <div style={{ textAlign: 'center' }}>
                                 <motion.div
@@ -155,10 +205,10 @@ function App() {
                                     <CloudUpload size={48} color="var(--primary)" />
                                 </motion.div>
                                 <p style={{ marginTop: '16px', fontWeight: '500' }}>
-                                    Click or drag and drop image here
+                                    Click or drag and drop {uploadMode}s here
                                 </p>
                                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                                    PNG, JPG, JPEG up to 10MB
+                                    {uploadMode === 'image' ? 'PNG, JPG up to 10MB' : 'MP4, WEBM up to 100MB'}
                                 </p>
                             </div>
                         )}
@@ -168,22 +218,22 @@ function App() {
                         <button
                             className="btn"
                             onClick={handleUpload}
-                            disabled={!selectedFile || uploading}
+                            disabled={selectedFiles.length === 0 || uploading}
                         >
                             {uploading ? (
                                 <span>Uploading...</span>
                             ) : (
                                 <>
                                     <Upload size={20} />
-                                    <span>Generate URL</span>
+                                    <span>Generate URL{selectedFiles.length > 1 ? 's' : ''}</span>
                                 </>
                             )}
                         </button>
-                        {selectedFile && !uploading && (
+                        {selectedFiles.length > 0 && !uploading && (
                             <button
                                 className="btn"
                                 style={{ background: 'transparent', border: '1px solid var(--glass-border)' }}
-                                onClick={() => { setSelectedFile(null); setPreview(null); }}
+                                onClick={() => { setSelectedFiles([]); setPreviews([]); }}
                             >
                                 Cancel
                             </button>
@@ -192,7 +242,7 @@ function App() {
                 </div>
             </section>
 
-            {generatedUrl && (
+            {generatedUrls.length > 0 && (
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
@@ -207,41 +257,36 @@ function App() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                             <Check size={20} color="var(--accent)" />
-                            <h3 style={{ fontSize: '1.1rem', color: 'var(--accent)', fontWeight: '600' }}>URL Generated Successfully:</h3>
+                            <h3 style={{ fontSize: '1.1rem', color: 'var(--accent)', fontWeight: '600' }}>{generatedUrls.length} URL{generatedUrls.length > 1 ? 's' : ''} Generated Successfully:</h3>
                         </div>
-                        <button onClick={() => setGeneratedUrl('')} className="icon-btn" style={{ fontSize: '0.8rem' }}>close</button>
+                        <button onClick={() => setGeneratedUrls([])} className="icon-btn" style={{ fontSize: '0.8rem' }}>close</button>
                     </div>
-                    <div
-                        onClick={() => {
-                            navigator.clipboard.writeText(generatedUrl);
-                            // setCopied(true);
-                        }}
-                        style={{
-                            marginTop: '16px',
-                            padding: '16px',
-                            background: 'rgba(0,0,0,0.4)',
-                            borderRadius: '12px',
-                            cursor: 'pointer',
-                            fontFamily: 'monospace',
-                            wordBreak: 'break-all',
-                            color: 'var(--accent)',
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            fontSize: '0.95rem',
-                            transition: 'all 0.2s'
-                        }}
-                    >
-                        {generatedUrl}
-                    </div>
-                    <div style={{ display: 'flex', gap: '12px', marginTop: '16px' }}>
-                        <button className="btn" style={{ padding: '8px 16px', fontSize: '0.85rem' }} onClick={() => {
-                            navigator.clipboard.writeText(generatedUrl);
-                            alert('Copied to clipboard!');
-                        }}>
-                            <Copy size={16} /> Copy URL
-                        </button>
-                        <a href={generatedUrl} target="_blank" rel="noreferrer" className="btn" style={{ padding: '8px 16px', fontSize: '0.85rem', background: 'transparent', border: '1px solid var(--glass-border)' }}>
-                            <ExternalLink size={16} /> Open Link
-                        </a>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '16px' }}>
+                        {generatedUrls.map((url, idx) => (
+                            <div key={idx} style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                                <div
+                                    style={{
+                                        flex: 1,
+                                        padding: '12px',
+                                        background: 'rgba(0,0,0,0.4)',
+                                        borderRadius: '8px',
+                                        fontFamily: 'monospace',
+                                        wordBreak: 'break-all',
+                                        color: 'var(--accent)',
+                                        border: '1px solid rgba(255,255,255,0.1)',
+                                        fontSize: '0.9rem'
+                                    }}
+                                >
+                                    {url}
+                                </div>
+                                <button className="icon-btn" onClick={() => copyToClipboard(url, 'gen-' + idx)} title="Copy URL">
+                                    {copiedId === 'gen-' + idx ? <Check size={18} color="#10b981" /> : <Copy size={18} />}
+                                </button>
+                                <a href={url} target="_blank" rel="noreferrer" className="icon-btn" title="Open in new tab">
+                                    <ExternalLink size={18} />
+                                </a>
+                            </div>
+                        ))}
                     </div>
                 </motion.div>
             )}
@@ -263,7 +308,11 @@ function App() {
                                 exit={{ opacity: 0, scale: 0.9 }}
                                 className="image-card"
                             >
-                                <img src={img.url} alt="Uploaded" />
+                                {isVideoURL(img.url) ? (
+                                    <video src={img.url} controls style={{ width: '100%', height: '200px', objectFit: 'cover', display: 'block' }} />
+                                ) : (
+                                    <img src={img.url} alt="Uploaded" />
+                                )}
                                 <div className="image-info">
                                     <div className="url-box" title={img.url}>
                                         {img.url}

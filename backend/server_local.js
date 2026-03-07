@@ -12,7 +12,8 @@ const port = 5001; // Different port to avoid conflict
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // MongoDB connection
 const mongoURI = 'mongodb://localhost:27017/image2url';
@@ -43,12 +44,13 @@ const storage = new GridFsStorage({
     }
 });
 
-const upload = multer({ storage });
+const upload = multer({ storage }); // No file size limit
 
 // @route POST /upload
-app.post('/upload', upload.single('image'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-    res.json({ file: req.file, url: `http://localhost:${port}/image/${req.file.filename}` });
+app.post('/upload', upload.array('images', 10), (req, res) => {
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded' });
+    const urls = req.files.map(file => `http://localhost:${port}/image/${file.filename}`);
+    res.json({ files: req.files, urls: urls });
 });
 
 // @route GET /image/:filename
@@ -57,12 +59,16 @@ app.get('/image/:filename', (req, res) => {
         if (!file || file.length === 0) {
             return res.status(404).json({ error: 'No file exists' });
         }
-        // Check if image
-        if (file.contentType === 'image/jpeg' || file.contentType === 'image/png' || file.contentType === 'image/jpg') {
+        // Check if image or video
+        const isImage = file.contentType === 'image/jpeg' || file.contentType === 'image/png' || file.contentType === 'image/jpg' || file.contentType.startsWith('image/');
+        const isVideo = file.contentType === 'video/mp4' || file.contentType === 'video/webm' || file.contentType === 'video/ogg' || file.contentType.startsWith('video/');
+
+        if (isImage || isVideo) {
+            res.set('Content-Type', file.contentType);
             const readstream = gfs.createReadStream(file.filename);
             readstream.pipe(res);
         } else {
-            res.status(400).json({ error: 'Not an image' });
+            res.status(400).json({ error: 'Not a supported image or video' });
         }
     });
 });

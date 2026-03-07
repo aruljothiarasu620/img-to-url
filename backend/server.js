@@ -14,7 +14,8 @@ const port = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 // Normalize Vercel paths (removes /api prefix so existing routes work)
 app.use((req, res, next) => {
@@ -47,7 +48,8 @@ if (isCloudinaryConfigured) {
     cloudinary: cloudinary,
     params: {
       folder: 'image2url',
-      allowed_formats: ['jpg', 'png', 'jpeg']
+      resource_type: 'auto', // Automatically detects image or video
+      allowed_formats: ['jpg', 'png', 'jpeg', 'mp4', 'webm', 'ogg', 'mov']
     }
   });
 
@@ -75,7 +77,7 @@ if (isCloudinaryConfigured) {
   app.use('/uploads', express.static(uploadsDir));
 }
 
-const upload = multer({ storage });
+const upload = multer({ storage }); // No file size limit
 
 // MySQL / Sequelize Connection
 const sequelize = new Sequelize(
@@ -126,56 +128,62 @@ async function startDB() {
 startDB();
 
 // @route POST /upload
-app.post('/upload', upload.single('image'), async (req, res) => {
+app.post('/upload', upload.array('images', 10), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    let url;
-    let id_ref;
+    const uploadedData = [];
 
-    if (isCloudinaryConfigured) {
-      url = req.file.path;
-      id_ref = req.file.filename;
-    } else {
-      // Because Vercel deletes local files in /tmp instantly, we use a public free hosting API
-      // as a seamless fallback if the user hasn't set up Cloudinary keys yet.
-      const isVercel = process.env.VERCEL === '1';
+    for (const file of req.files) {
+      let url;
+      let id_ref;
 
-      if (isVercel) {
-        const axios = require('axios');
-        const base64Image = fs.readFileSync(req.file.path, { encoding: 'base64' });
-        const formData = new URLSearchParams();
-        formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); // Public freeimagehost API Key
-        formData.append('action', 'upload');
-        formData.append('format', 'json');
-        formData.append('source', base64Image);
-
-        const response = await axios.post('https://freeimage.host/api/1/upload', formData, {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-        });
-
-        url = response.data.image.url;
-        id_ref = 'freehost-' + response.data.image.name;
-
-        // Cleanup Vercel temp disk
-        fs.unlinkSync(req.file.path);
+      if (isCloudinaryConfigured) {
+        url = file.path;
+        id_ref = file.filename;
       } else {
-        url = `http://localhost:${port}/uploads/${req.file.filename}`;
-        id_ref = req.file.filename;
+        // Because Vercel deletes local files in /tmp instantly, we use a public free hosting API
+        // as a seamless fallback if the user hasn't set up Cloudinary keys yet.
+        const isVercel = process.env.VERCEL === '1';
+
+        if (isVercel) {
+          const axios = require('axios');
+          const base64Image = fs.readFileSync(file.path, { encoding: 'base64' });
+          const formData = new URLSearchParams();
+          formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); // Public freeimagehost API Key
+          formData.append('action', 'upload');
+          formData.append('format', 'json');
+          formData.append('source', base64Image);
+
+          const response = await axios.post('https://freeimage.host/api/1/upload', formData, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+          });
+
+          url = response.data.image.url;
+          id_ref = 'freehost-' + response.data.image.name;
+
+          // Cleanup Vercel temp disk
+          fs.unlinkSync(file.path);
+        } else {
+          url = `http://localhost:${port}/uploads/${file.filename}`;
+          id_ref = file.filename;
+        }
+      }
+
+      // Attempt to save to MySQL if connected, otherwise return URL with warning
+      try {
+        const newImage = await Image.create({ url, id_ref });
+        uploadedData.push({ url: newImage.url, id: newImage.id });
+      } catch (dbErr) {
+        console.error('DB Save failed, but serving file:', dbErr.message);
+        // Fallback: Still return the URL so the UI doesn't break, but notify server logs
+        uploadedData.push({ url, id: 'temp-' + Date.now() + Math.random(), notice: 'Database save failed, image not persisted.' });
       }
     }
 
-    // Attempt to save to MySQL if connected, otherwise return URL with warning
-    try {
-      const newImage = await Image.create({ url, id_ref });
-      res.json({ url: newImage.url, id: newImage.id });
-    } catch (dbErr) {
-      console.error('DB Save failed, but serving file:', dbErr.message);
-      // Fallback: Still return the URL so the UI doesn't break, but notify server logs
-      res.json({ url, id: 'temp-' + Date.now(), notice: 'Database save failed, image not persisted.' });
-    }
+    res.json({ urls: uploadedData.map(u => u.url), data: uploadedData });
   } catch (err) {
     console.error('Upload error:', err);
     res.status(500).json({ error: err.message });

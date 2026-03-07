@@ -21,7 +21,7 @@ body {
   background-color: var(--bg-color);
   color: var(--text-primary);
   min-height: 100vh;
-  background-image: 
+  background-image:
     radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0, transparent 50%),
     radial-gradient(at 100% 100%, rgba(34, 211, 238, 0.15) 0, transparent 50%);
   display: flex;
@@ -62,6 +62,7 @@ h1 {
   margin-bottom: 8px;
   background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
@@ -80,7 +81,9 @@ p.subtitle {
 .dropzone {
   width: 100%;
   max-width: 500px;
-  height: 200px;
+  min-height: 200px;
+  height: auto;
+  padding: 24px;
   border: 2px dashed var(--glass-border);
   border-radius: 20px;
   display: flex;
@@ -209,8 +212,15 @@ p.subtitle {
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {
