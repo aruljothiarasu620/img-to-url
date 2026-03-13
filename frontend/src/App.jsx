@@ -71,6 +71,14 @@ function App() {
     const handleUpload = async () => {
         if (!selectedFiles || selectedFiles.length === 0) return;
 
+        // Vercel hard limit check (approx 4.5MB per request)
+        const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+        const isVercel = window.location.hostname.includes('vercel.app');
+        if (isVercel && totalSize > 4.5 * 1024 * 1024) {
+            alert(`Vercel limits uploads to 4.5MB. Your current selection is ${(totalSize / (1024 * 1024)).toFixed(2)}MB. Please upload smaller files or use local hosting.`);
+            return;
+        }
+
         setUploading(true);
         const formData = new FormData();
         selectedFiles.forEach(file => {
@@ -95,7 +103,12 @@ function App() {
 
         } catch (err) {
             console.error('Upload failed:', err);
-            const errMsg = err.response?.data?.error || err.message || JSON.stringify(err);
+            let errMsg = 'An unknown error occurred';
+            if (err.response?.data?.error) {
+                errMsg = typeof err.response.data.error === 'string' ? err.response.data.error : JSON.stringify(err.response.data.error);
+            } else if (err.message) {
+                errMsg = err.message;
+            }
             alert('Upload failed: ' + errMsg);
         } finally {
             setUploading(false);
@@ -139,7 +152,8 @@ function App() {
 
     const isVideoURL = (img) => {
         if (img.type === 'video') return true;
-        return img.url.match(/\.(mp4|webm|ogg|mov)$/i);
+        const url = img.url.toLowerCase();
+        return url.match(/\.(mp4|webm|ogg|mov)$/) || url.includes('/video/upload/') || url.includes('res.cloudinary.com') && url.includes('/video/');
     };
 
     const filteredImages = images.filter(img => {

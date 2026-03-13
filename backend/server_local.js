@@ -55,17 +55,23 @@ app.post('/upload', upload.array('images', 10), (req, res) => {
 
 // @route GET /image/:filename
 app.get('/image/:filename', (req, res) => {
+    if (!gfs) return res.status(500).json({ error: 'GridFS not initialized' });
+    
     gfs.files.findOne({ filename: req.params.filename }, (err, file) => {
+        if (err) return res.status(500).json({ error: err.message });
         if (!file || file.length === 0) {
             return res.status(404).json({ error: 'No file exists' });
         }
-        // Check if image or video
-        const isImage = file.contentType === 'image/jpeg' || file.contentType === 'image/png' || file.contentType === 'image/jpg' || file.contentType.startsWith('image/');
-        const isVideo = file.contentType === 'video/mp4' || file.contentType === 'video/webm' || file.contentType === 'video/ogg' || file.contentType.startsWith('video/');
+        
+        // Basic check for image or video
+        const isImage = file.contentType && file.contentType.startsWith('image/');
+        const isVideo = file.contentType && file.contentType.startsWith('video/');
 
         if (isImage || isVideo) {
             res.set('Content-Type', file.contentType);
+            res.set('Accept-Ranges', 'bytes'); // Hint for video seeking
             const readstream = gfs.createReadStream(file.filename);
+            readstream.on('error', (err) => res.status(500).json({ error: 'Stream error' }));
             readstream.pipe(res);
         } else {
             res.status(400).json({ error: 'Not a supported image or video' });

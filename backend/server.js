@@ -46,10 +46,14 @@ if (isCloudinaryConfigured) {
 
   storage = new CloudinaryStorage({
     cloudinary: cloudinary,
-    params: {
-      folder: 'image2url',
-      resource_type: 'auto', // Automatically detects image or video
-      allowed_formats: ['jpg', 'png', 'jpeg', 'mp4', 'webm', 'ogg', 'mov']
+    params: async (req, file) => {
+      const isVideo = file.mimetype.startsWith('video/');
+      return {
+        folder: 'image2url',
+        resource_type: isVideo ? 'video' : 'image',
+        allowed_formats: isVideo ? ['mp4', 'webm', 'ogg', 'mov'] : ['jpg', 'png', 'jpeg', 'gif'],
+        public_id: Date.now() + '-' + file.originalname.split('.')[0]
+      };
     }
   });
 
@@ -190,7 +194,8 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
     res.json({ urls: uploadedData.map(u => u.url), data: uploadedData });
   } catch (err) {
     console.error('Upload error:', err);
-    res.status(500).json({ error: err.message });
+    const message = err.message || (typeof err === 'string' ? err : 'Internal Server Error');
+    res.status(500).json({ error: message });
   }
 });
 
