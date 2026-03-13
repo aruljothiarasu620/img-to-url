@@ -136,8 +136,44 @@ async function startDB() {
 }
 startDB();
 
+// @route GET /cloudinary-config
+app.get('/cloudinary-config', (req, res) => {
+  res.json({
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    isConfigured: isCloudinaryConfigured
+  });
+});
+
+// @route GET /sign-upload
+app.get('/sign-upload', (req, res) => {
+  if (!isCloudinaryConfigured) return res.status(400).json({ error: 'Cloudinary not configured' });
+  
+  const timestamp = Math.round((new Date()).getTime() / 1000);
+  const signature = cloudinary.utils.api_sign_request({
+    timestamp: timestamp,
+    folder: 'image2url'
+  }, process.env.CLOUDINARY_API_SECRET);
+
+  res.json({ signature, timestamp, apiKey: process.env.CLOUDINARY_API_KEY, cloudName: process.env.CLOUDINARY_CLOUD_NAME });
+});
+
+// @route POST /save-url
+app.post('/save-url', async (req, res) => {
+  try {
+    const { url, id_ref, type } = req.body;
+    if (!url || !id_ref) return res.status(400).json({ error: 'Missing data' });
+
+    const newImage = await Image.create({ url, id_ref, type: type || 'image' });
+    res.json({ success: true, data: newImage });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // @route POST /upload
 app.post('/upload', upload.array('images', 10), async (req, res) => {
+    // ... (existing code stays for small images)
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
@@ -146,8 +182,9 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
     const uploadedData = [];
 
     for (const file of req.files) {
-      let url;
       const type = file.mimetype.startsWith('video/') ? 'video' : 'image';
+      let url;
+      let id_ref;
 
       if (isCloudinaryConfigured) {
         url = file.path;

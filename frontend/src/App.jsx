@@ -71,34 +71,65 @@ function App() {
     const handleUpload = async () => {
         if (!selectedFiles || selectedFiles.length === 0) return;
 
-        // Vercel hard limit check (approx 4.5MB per request)
-        const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
-        const isVercel = window.location.hostname.includes('vercel.app');
-        if (isVercel && totalSize > 4.5 * 1024 * 1024) {
-            alert(`Vercel limits uploads to 4.5MB. Your current selection is ${(totalSize / (1024 * 1024)).toFixed(2)}MB. Please upload smaller files or use local hosting.`);
-            return;
-        }
-
         setUploading(true);
-        const formData = new FormData();
-        selectedFiles.forEach(file => {
-            formData.append('images', file); // Use 'images' array field
-        });
+        const isVercel = window.location.hostname.includes('vercel.app');
+        const uploadedUrls = [];
 
         try {
-            const res = await axios.post(`${API_BASE_URL}/upload`, formData);
-            const newUrls = res.data.urls || []; // Return array of URLs
-            setGeneratedUrls(newUrls);
+            // Check if we should use direct upload (required for large files on Vercel)
+            const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+            
+            if (isVercel || totalSize > 4 * 1024 * 1024) {
+                // --- DIRECT UPLOAD PATH ---
+                // 1. Get signature from backend
+                const signRes = await axios.get(`${API_BASE_URL}/sign-upload`);
+                const { signature, timestamp, apiKey, cloudName } = signRes.data;
 
+                for (const file of selectedFiles) {
+                    const type = file.type.startsWith('video/') ? 'video' : 'image';
+                    
+                    // 2. Upload to Cloudinary
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('api_key', apiKey);
+                    formData.append('timestamp', timestamp);
+                    formData.append('signature', signature);
+                    formData.append('folder', 'image2url');
+
+                    const cloudenaryRes = await axios.post(
+                        `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
+                        formData
+                    );
+
+                    const { secure_url, public_id } = cloudenaryRes.data;
+
+                    // 3. Save URL to our Database
+                    await axios.post(`${API_BASE_URL}/save-url`, {
+                        url: secure_url,
+                        id_ref: public_id,
+                        type: type
+                    });
+
+                    uploadedUrls.push(secure_url);
+                }
+            } else {
+                // --- PROXY UPLOAD PATH (For small files) ---
+                const formData = new FormData();
+                selectedFiles.forEach(file => formData.append('images', file));
+                const res = await axios.post(`${API_BASE_URL}/upload`, formData);
+                uploadedUrls.push(...(res.data.urls || []));
+            }
+
+            setGeneratedUrls(uploadedUrls);
             setSelectedFiles([]);
             setPreviews([]);
             fetchImages();
 
-            if (newUrls.length === 1) {
-                navigator.clipboard.writeText(newUrls[0]);
+            if (uploadedUrls.length === 1) {
+                navigator.clipboard.writeText(uploadedUrls[0]);
                 alert("Success! URL generated and copied to clipboard.");
-            } else if (newUrls.length > 1) {
-                alert(`Success! ${newUrls.length} URLs generated.`);
+            } else if (uploadedUrls.length > 1) {
+                alert(`Success! ${uploadedUrls.length} URLs generated.`);
             }
 
         } catch (err) {
