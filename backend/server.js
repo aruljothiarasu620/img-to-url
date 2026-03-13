@@ -102,9 +102,14 @@ const Image = sequelize.define('Image', {
     type: DataTypes.STRING,
     allowNull: false
   },
-  id_ref: { // Renamed from public_id to be more generic
+  id_ref: {
     type: DataTypes.STRING,
     allowNull: false
+  },
+  type: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    defaultValue: 'image'
   }
 });
 
@@ -113,7 +118,7 @@ async function startDB() {
   try {
     await sequelize.authenticate();
     console.log('✅ Connected to MySQL successfully.');
-    await sequelize.sync();
+    await sequelize.sync({ alter: true });
   } catch (err) {
     console.error('\n❌ MySQL Error: ' + err.message);
     if (err.name === 'SequelizeConnectionRefusedError') {
@@ -138,21 +143,22 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
 
     for (const file of req.files) {
       let url;
-      let id_ref;
+      const type = file.mimetype.startsWith('video/') ? 'video' : 'image';
 
       if (isCloudinaryConfigured) {
         url = file.path;
         id_ref = file.filename;
       } else {
-        // Because Vercel deletes local files in /tmp instantly, we use a public free hosting API
-        // as a seamless fallback if the user hasn't set up Cloudinary keys yet.
         const isVercel = process.env.VERCEL === '1';
 
         if (isVercel) {
+          if (type === 'video') {
+            throw new Error('Video uploads are only supported when Cloudinary is configured on Vercel.');
+          }
           const axios = require('axios');
           const base64Image = fs.readFileSync(file.path, { encoding: 'base64' });
           const formData = new URLSearchParams();
-          formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); // Public freeimagehost API Key
+          formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); 
           formData.append('action', 'upload');
           formData.append('format', 'json');
           formData.append('source', base64Image);
@@ -164,7 +170,6 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
           url = response.data.image.url;
           id_ref = 'freehost-' + response.data.image.name;
 
-          // Cleanup Vercel temp disk
           fs.unlinkSync(file.path);
         } else {
           url = `http://localhost:${port}/uploads/${file.filename}`;
@@ -172,14 +177,13 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
         }
       }
 
-      // Attempt to save to MySQL if connected, otherwise return URL with warning
+      // Save to MySQL
       try {
-        const newImage = await Image.create({ url, id_ref });
-        uploadedData.push({ url: newImage.url, id: newImage.id });
+        const newImage = await Image.create({ url, id_ref, type });
+        uploadedData.push({ url: newImage.url, id: newImage.id, type: newImage.type });
       } catch (dbErr) {
         console.error('DB Save failed, but serving file:', dbErr.message);
-        // Fallback: Still return the URL so the UI doesn't break, but notify server logs
-        uploadedData.push({ url, id: 'temp-' + Date.now() + Math.random(), notice: 'Database save failed, image not persisted.' });
+        uploadedData.push({ url, id: 'temp-' + Date.now() + Math.random(), type, notice: 'Database save failed.' });
       }
     }
 

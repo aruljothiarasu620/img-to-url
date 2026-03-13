@@ -79,11 +79,15 @@ app.get('/images', (req, res) => {
         if (err || !files || files.length === 0) {
             return res.json([]);
         }
-        const imagesWithUrl = files.map(file => ({
-            ...file,
-            url: `http://localhost:${port}/image/${file.filename}`,
-            _id: file._id
-        }));
+        const imagesWithUrl = files.map(file => {
+            const isVideo = file.contentType && (file.contentType === 'video/mp4' || file.contentType === 'video/webm' || file.contentType === 'video/ogg' || file.contentType.startsWith('video/'));
+            return {
+                ...file,
+                url: `http://localhost:${port}/image/${file.filename}`,
+                _id: file._id,
+                type: isVideo ? 'video' : 'image'
+            };
+        });
         res.json(imagesWithUrl);
     });
 });

@@ -23,6 +23,7 @@ function App() {
     const [images, setImages] = useState([]);
     const [copiedId, setCopiedId] = useState(null);
     const [dragActive, setDragActive] = useState(false);
+    const [filter, setFilter] = useState('all'); // 'all', 'image', 'video'
     const fileInputRef = useRef(null);
 
     useEffect(() => {
@@ -136,9 +137,15 @@ function App() {
         }
     };
 
-    const isVideoURL = (url) => {
-        return url.match(/\.(mp4|webm|ogg|mov)$/i);
+    const isVideoURL = (img) => {
+        if (img.type === 'video') return true;
+        return img.url.match(/\.(mp4|webm|ogg|mov)$/i);
     };
+
+    const filteredImages = images.filter(img => {
+        if (filter === 'all') return true;
+        return img.type === filter;
+    });
 
     return (
         <div className="container">
@@ -292,14 +299,38 @@ function App() {
             )}
 
             <section className="gallery-section">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
-                    <ImageIcon size={24} color="var(--accent)" />
-                    <h2 style={{ fontSize: '1.5rem', fontWeight: '600' }}>Your Gallery</h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <ImageIcon size={24} color="var(--accent)" />
+                        <h2 style={{ fontSize: '1.5rem', fontWeight: '600' }}>Your Gallery & History</h2>
+                    </div>
+                    <div style={{ display: 'flex', background: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                        {['all', 'image', 'video'].map((type) => (
+                            <button
+                                key={type}
+                                onClick={() => setFilter(type)}
+                                style={{
+                                    padding: '6px 16px',
+                                    borderRadius: '8px',
+                                    border: 'none',
+                                    background: filter === type ? 'var(--primary)' : 'transparent',
+                                    color: filter === type ? 'white' : 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.85rem',
+                                    fontWeight: '600',
+                                    transition: 'all 0.2s',
+                                    textTransform: 'capitalize'
+                                }}
+                            >
+                                {type}s
+                            </button>
+                        ))}
+                    </div>
                 </div>
 
                 <div className="gallery">
-                    <AnimatePresence>
-                        {images.map((img) => (
+                    <AnimatePresence mode="popLayout">
+                        {filteredImages.map((img) => (
                             <motion.div
                                 key={img.id || img._id}
                                 layout
@@ -308,11 +339,27 @@ function App() {
                                 exit={{ opacity: 0, scale: 0.9 }}
                                 className="image-card"
                             >
-                                {isVideoURL(img.url) ? (
+                                {isVideoURL(img) ? (
                                     <video src={img.url} controls style={{ width: '100%', height: '200px', objectFit: 'cover', display: 'block' }} />
                                 ) : (
                                     <img src={img.url} alt="Uploaded" />
                                 )}
+                                <div style={{ 
+                                    position: 'absolute', 
+                                    top: '12px', 
+                                    left: '12px', 
+                                    background: 'rgba(0,0,0,0.6)', 
+                                    padding: '4px 8px', 
+                                    borderRadius: '6px', 
+                                    fontSize: '0.7rem', 
+                                    fontWeight: '700',
+                                    color: img.type === 'video' ? 'var(--accent)' : '#fff',
+                                    backdropFilter: 'blur(4px)',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    textTransform: 'uppercase'
+                                }}>
+                                    {img.type === 'video' ? 'Video' : 'Pic'}
+                                </div>
                                 <div className="image-info">
                                     <div className="url-box" title={img.url}>
                                         {img.url}
