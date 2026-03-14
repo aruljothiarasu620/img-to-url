@@ -26,16 +26,29 @@ function App() {
     const [filter, setFilter] = useState('all'); // 'all', 'image', 'video'
     const fileInputRef = useRef(null);
 
+    const [cloudinaryConfig, setCloudinaryConfig] = useState(null);
+
     useEffect(() => {
         fetchImages();
+        checkCloudinary();
     }, []);
+
+    const checkCloudinary = async () => {
+        try {
+            const res = await axios.get(`${API_BASE_URL}/cloudinary-config`);
+            setCloudinaryConfig(res.data);
+        } catch (err) {
+            console.error('Failed to check Cloudinary config:', err);
+        }
+    };
 
     const fetchImages = async () => {
         try {
             const res = await axios.get(`${API_BASE_URL}/images`);
-            setImages(res.data);
+            setImages(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error('Failed to fetch images:', err);
+            setImages([]);
         }
     };
 
@@ -78,8 +91,9 @@ function App() {
         try {
             // Check if we should use direct upload (required for large files on Vercel)
             const totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+            const useDirectUpload = (isVercel || totalSize > 4 * 1024 * 1024) && (cloudinaryConfig?.isConfigured);
             
-            if (isVercel || totalSize > 4 * 1024 * 1024) {
+            if (useDirectUpload) {
                 // --- DIRECT UPLOAD PATH ---
                 // 1. Get signature from backend
                 const signRes = await axios.get(`${API_BASE_URL}/sign-upload`);

@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { Sequelize, DataTypes } = require('sequelize');
-require('mysql2'); // Explicitly required for Vercel bundler
+const { createClient } = require('@supabase/supabase-js');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
@@ -25,7 +24,57 @@ app.use((req, res, next) => {
   next();
 });
 
-// Determine if Cloudinary is configured
+// ── Supabase Client ─────────────────────────────────────────────
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_ANON_KEY;
+let supabase = null;
+
+if (supabaseUrl && supabaseKey &&
+    supabaseUrl !== 'your_supabase_url' &&
+    supabaseKey !== 'your_supabase_anon_key') {
+  supabase = createClient(supabaseUrl, supabaseKey);
+  console.log('✅ Supabase configured.');
+} else {
+  console.warn('⚠️  Supabase not configured. Gallery history will be disabled.');
+}
+
+// Helper: save a media record to Supabase
+async function saveRecord(url, id_ref, type) {
+  if (!supabase) return { id: 'temp-' + Date.now(), url, id_ref, type };
+  const { data, error } = await supabase
+    .from('images')
+    .insert([{ url, id_ref, type }])
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Helper: fetch all records from Supabase
+async function fetchRecords() {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('images')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(error.message);
+  return data || [];
+}
+
+// Helper: delete a record from Supabase
+async function deleteRecord(id) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('images')
+    .delete()
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// ── Cloudinary / Storage Setup ───────────────────────────────────
 const isCloudinaryConfigured =
   process.env.CLOUDINARY_CLOUD_NAME &&
   process.env.CLOUDINARY_CLOUD_NAME !== 'your_cloud_name' &&
@@ -51,90 +100,33 @@ if (isCloudinaryConfigured) {
       return {
         folder: 'image2url',
         resource_type: isVideo ? 'video' : 'image',
-        allowed_formats: isVideo ? ['mp4', 'webm', 'ogg', 'mov'] : ['jpg', 'png', 'jpeg', 'gif'],
+        allowed_formats: isVideo
+          ? ['mp4', 'webm', 'ogg', 'mov']
+          : ['jpg', 'png', 'jpeg', 'gif'],
         public_id: Date.now() + '-' + file.originalname.split('.')[0]
       };
     }
   });
-
 } else {
-  console.log('⚠️  Cloudinary keys missing or placeholder. FALLBACK: Using Local Storage.');
-  // Ensure local uploads directory exists
-  // Vercel only allows writing to /tmp directory
+  console.log('⚠️  Cloudinary keys missing. FALLBACK: Using Local Storage.');
   const isVercel = process.env.VERCEL === '1';
   const uploadsDir = isVercel ? '/tmp/uploads' : path.join(__dirname, 'uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir);
-  }
+  if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
   storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-      cb(null, uploadsDir);
-    },
+    destination: (req, file, cb) => cb(null, uploadsDir),
     filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
       cb(null, uniqueSuffix + path.extname(file.originalname));
     }
   });
 
-  // Serve the uploads folder as static
   app.use('/uploads', express.static(uploadsDir));
 }
 
 const upload = multer({ storage }); // No file size limit
 
-// MySQL / Sequelize Connection
-const sequelize = new Sequelize(
-  process.env.DB_NAME || 'image2url',
-  process.env.DB_USER || 'root',
-  process.env.DB_PASSWORD || '',
-  {
-    host: process.env.DB_HOST || 'localhost',
-    port: process.env.DB_PORT || 3306,
-    dialect: 'mysql',
-    logging: false,
-    dialectOptions: {
-      connectTimeout: 2000
-    },
-    retry: { max: 1 }
-  }
-);
-
-// Define Image Model
-const Image = sequelize.define('Image', {
-  url: {
-    type: DataTypes.STRING,
-    allowNull: false
-  },
-  id_ref: {
-    type: DataTypes.STRING,
-    allowNull: false
-  },
-  type: {
-    type: DataTypes.STRING,
-    allowNull: false,
-    defaultValue: 'image'
-  }
-});
-
-// Sync Database
-async function startDB() {
-  try {
-    await sequelize.authenticate();
-    console.log('✅ Connected to MySQL successfully.');
-    await sequelize.sync({ alter: true });
-  } catch (err) {
-    console.error('\n❌ MySQL Error: ' + err.message);
-    if (err.name === 'SequelizeConnectionRefusedError') {
-      console.error('👉 Tip: Make sure MySQL is RUNNING on port 3306.');
-    } else if (err.name === 'SequelizeAccessDeniedError') {
-      console.error('👉 Tip: Check your DB_USER and DB_PASSWORD in .env');
-    } else {
-      console.error('👉 Tip: Make sure you have created the database "image2url"');
-    }
-  }
-}
-startDB();
+// ── Routes ───────────────────────────────────────────────────────
 
 // @route GET /cloudinary-config
 app.get('/cloudinary-config', (req, res) => {
@@ -147,33 +139,45 @@ app.get('/cloudinary-config', (req, res) => {
 
 // @route GET /sign-upload
 app.get('/sign-upload', (req, res) => {
-  if (!isCloudinaryConfigured) return res.status(400).json({ error: 'Cloudinary not configured' });
-  
-  const timestamp = Math.round((new Date()).getTime() / 1000);
-  const signature = cloudinary.utils.api_sign_request({
-    timestamp: timestamp,
-    folder: 'image2url'
-  }, process.env.CLOUDINARY_API_SECRET);
+  if (!isCloudinaryConfigured)
+    return res.status(400).json({ error: 'Cloudinary not configured' });
 
-  res.json({ signature, timestamp, apiKey: process.env.CLOUDINARY_API_KEY, cloudName: process.env.CLOUDINARY_CLOUD_NAME });
+  const timestamp = Math.round(new Date().getTime() / 1000);
+  const signature = cloudinary.utils.api_sign_request(
+    { timestamp, folder: 'image2url' },
+    process.env.CLOUDINARY_API_SECRET
+  );
+
+  res.json({
+    signature,
+    timestamp,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME
+  });
 });
 
-// @route POST /save-url
+// @route POST /save-url  (called after direct Cloudinary upload from frontend)
 app.post('/save-url', async (req, res) => {
   try {
     const { url, id_ref, type } = req.body;
     if (!url || !id_ref) return res.status(400).json({ error: 'Missing data' });
 
-    const newImage = await Image.create({ url, id_ref, type: type || 'image' });
-    res.json({ success: true, data: newImage });
+    let record;
+    try {
+      record = await saveRecord(url, id_ref, type || 'image');
+    } catch (dbErr) {
+      console.error('DB Save failed in save-url:', dbErr.message);
+      record = { url, id_ref, type: type || 'image', id: 'temp-' + Date.now() };
+    }
+
+    res.json({ success: true, data: record });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// @route POST /upload
+// @route POST /upload  (proxy upload — used for small files / local mode)
 app.post('/upload', upload.array('images', 10), async (req, res) => {
-    // ... (existing code stays for small images)
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
@@ -194,23 +198,26 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
 
         if (isVercel) {
           if (type === 'video') {
-            throw new Error('Video uploads are only supported when Cloudinary is configured on Vercel.');
+            throw new Error(
+              'Video uploads require Cloudinary to be configured. Please add your Cloudinary credentials.'
+            );
           }
           const axios = require('axios');
           const base64Image = fs.readFileSync(file.path, { encoding: 'base64' });
           const formData = new URLSearchParams();
-          formData.append('key', '6d207e02198a847aa98d0a2a901485a5'); 
+          formData.append('key', '6d207e02198a847aa98d0a2a901485a5');
           formData.append('action', 'upload');
           formData.append('format', 'json');
           formData.append('source', base64Image);
 
-          const response = await axios.post('https://freeimage.host/api/1/upload', formData, {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-          });
+          const response = await axios.post(
+            'https://freeimage.host/api/1/upload',
+            formData,
+            { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+          );
 
           url = response.data.image.url;
           id_ref = 'freehost-' + response.data.image.name;
-
           fs.unlinkSync(file.path);
         } else {
           url = `http://localhost:${port}/uploads/${file.filename}`;
@@ -218,60 +225,91 @@ app.post('/upload', upload.array('images', 10), async (req, res) => {
         }
       }
 
-      // Save to MySQL
+      let record;
       try {
-        const newImage = await Image.create({ url, id_ref, type });
-        uploadedData.push({ url: newImage.url, id: newImage.id, type: newImage.type });
+        record = await saveRecord(url, id_ref, type);
       } catch (dbErr) {
         console.error('DB Save failed, but serving file:', dbErr.message);
-        uploadedData.push({ url, id: 'temp-' + Date.now() + Math.random(), type, notice: 'Database save failed.' });
+        record = { url, id: 'temp-' + Date.now() + Math.random(), type };
       }
+
+      uploadedData.push(record);
     }
 
-    res.json({ urls: uploadedData.map(u => u.url), data: uploadedData });
+    res.json({
+      urls: uploadedData.map(u => u.url),
+      data: uploadedData
+    });
   } catch (err) {
     console.error('Upload error:', err);
-    const message = err.message || (typeof err === 'string' ? err : 'Internal Server Error');
+    const message =
+      err.message ||
+      (typeof err === 'string' ? err : 'Internal Server Error');
     res.status(500).json({ error: message });
   }
 });
 
-// @route GET /test
-// Health check
+// @route GET /test — health check
 app.get('/test', (req, res) => {
-  res.json({ ok: true, message: 'Server is running', vercel: process.env.VERCEL });
+  res.json({
+    ok: true,
+    message: 'Server is running',
+    vercel: process.env.VERCEL,
+    supabase: !!supabase,
+    cloudinary: isCloudinaryConfigured
+  });
 });
 
 // @route GET /images
 app.get('/images', async (req, res) => {
   try {
-    const images = await Image.findAll({ order: [['createdAt', 'DESC']] });
-    res.json(images);
+    const records = await fetchRecords();
+    res.json(records);
   } catch (err) {
     console.error('Fetch error:', err.message);
-    res.json([]); // Return empty gallery if DB is down
+    res.json([]);
   }
 });
 
 // @route DELETE /image/:id
 app.delete('/image/:id', async (req, res) => {
   try {
-    if (String(req.params.id).startsWith('temp-')) {
-      return res.json({ message: 'Temporary image ignored' });
+    const id = req.params.id;
+
+    if (String(id).startsWith('temp-')) {
+      return res.json({ message: 'Temporary record ignored' });
     }
 
-    const image = await Image.findByPk(req.params.id);
-    if (!image) return res.status(404).json({ error: 'Image not found' });
+    // Fetch the record first to get id_ref for Cloudinary deletion
+    let record = null;
+    if (supabase) {
+      const { data } = await supabase
+        .from('images')
+        .select('*')
+        .eq('id', id)
+        .single();
+      record = data;
+    }
 
-    if (isCloudinaryConfigured) {
-      await cloudinary.uploader.destroy(image.id_ref);
+    if (!record) return res.status(404).json({ error: 'Record not found' });
+
+    // Delete from Cloudinary / local disk
+    if (isCloudinaryConfigured && record.id_ref) {
+      try {
+        const resourceType = record.type === 'video' ? 'video' : 'image';
+        await cloudinary.uploader.destroy(record.id_ref, { resource_type: resourceType });
+      } catch (cldErr) {
+        console.error('Cloudinary delete error:', cldErr.message);
+      }
     } else {
-      const localPath = path.join(__dirname, 'uploads', image.id_ref);
+      const localPath = path.join(__dirname, 'uploads', record.id_ref || '');
       if (fs.existsSync(localPath)) fs.unlinkSync(localPath);
     }
 
-    await image.destroy();
-    res.json({ message: 'Image deleted successfully' });
+    // Delete from Supabase
+    await deleteRecord(id);
+
+    res.json({ message: 'Deleted successfully' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -280,7 +318,7 @@ app.delete('/image/:id', async (req, res) => {
 app.listen(port, () => {
   console.log(`\n🚀 Server running at http://localhost:${port}`);
   if (!isCloudinaryConfigured) {
-    console.log(`📂 Images will be served from: http://localhost:${port}/uploads/`);
+    console.log(`📂 Files will be served from: http://localhost:${port}/uploads/`);
   }
 });
 
